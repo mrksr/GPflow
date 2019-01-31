@@ -119,7 +119,7 @@ class Likelihood(Module):
 class Gaussian(Likelihood):
     def __init__(self, variance=1.0, **kwargs):
         super().__init__(**kwargs)
-        self.variance = Parameter(variance, transform=positive())
+        self.variance = Parameter(variance, name='likelihood_variance', dtype=default_float(), transform=positive())
 
     def logp(self, F, Y):
         return logdensities.gaussian(Y, F, self.variance)

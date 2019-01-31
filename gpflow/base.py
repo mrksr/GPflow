@@ -1,121 +1,72 @@
-from typing import Optional, Union, List, Tuple
+import itertools as it
 import numpy as np
 import tensorflow as tf
-import tensorflow.contrib.eager as tfe
 import tensorflow_probability as tfp
 from .util import default_float
-
-
-DType = Union[np.dtype, tf.DType]
-VariableData = Union[List, Tuple, np.ndarray, int, float]
-Transform = tfp.bijectors.Bijector
-Prior = tfp.distributions.Distribution
-ModuleLike = Union['Module', 'ModuleList']
 
 
 positive = tfp.bijectors.Softplus
 triangular = tfp.bijectors.FillTriangular
 
 
-class Parameter(tfe.Variable):
-    """
-    Unconstrained parameter representation.
-    According to standart terminology `y` is always transformed representation or,
-    in other words, it is constrained version of the parameter. Normally, it is hard
-    to operate with unconstrained parameters. For e.g. `variance` cannot be negative,
-    therefore we need positive constraint and it is natural to use constrained values.
-    """
-    def __init__(self, data: VariableData,
-                 transform: Optional[Transform] = None,
-                 prior: Optional[Prior] = None,
-                 trainable: bool = True,
-                 dtype: np.dtype = None,
-                 unconstrained: bool = False,
-                 constrained: bool = True):
-        data = _to_variable_data(data, dtype=dtype)
-        unconstrained_data = _to_unconstrained(data, transform)
-        super().__init__(unconstrained_data, trainable=trainable)
+class Parameter:
+    def __init__(
+            self,
+            data=None,
+            unconstrained_tensor=None,
+            dtype=None,
+            name=None,
+            prior=None,
+            transform=None,
+            trainable=True,
+    ):
+        if data is None and unconstrained_tensor is None:
+            raise ValueError('You need to pass either initial data or an unconstrained tensor.')
+
+        if tf.contrib.framework.is_tensor(data):
+            unconstrained_tensor = data
+            transform = None
+            trainable = False
+
+        if name is None:
+            name = 'unnamed'
+
+        if transform is None:
+            transform = tfp.bijectors.Identity()
         self.transform = transform
+
         self.prior = prior
-        self.is_constrained = constrained
 
-    @property
-    def trainable(self) -> bool:
-        return super().trainable
+        if unconstrained_tensor is None:
+            initial_value = self.transform.inverse(tf.constant(data, dtype=dtype))
 
-    # TODO(@awav): proper solution
-    # @property
-    # def shape(self):
-    #     return self._shape
+            unconstrained_tensor = tf.get_variable(
+                name,
+                dtype=dtype,
+                initializer=initial_value,
+            )
+        self.unconstrained_tensor = unconstrained_tensor
+        self.constrained_tensor = self.transform.forward(unconstrained_tensor, name=f'{name}_constrained')
 
-    #     # if self.is_constrained:
-    #     #     return self._read_variable_op().shape
-    #     # return super().shape
-
-    # @property
-    # def is_constrained(self):
-    #     constrained = self.__dict__.get('_is_constrained')
-    #     return bool(constrained)
-
-    # @is_constrained.setter
-    # def is_constrained(self, value: bool):
-    #     value = bool(value)
-    #     constrained = self.__dict__.get('_is_constrained')
-    #     if constrained is not None and value == constrained:
-    #         return
-    #     if value:
-    #         shape = self.constrained.shape
-    #     else:
-    #         shape = super()._read_variable_op().shape
-    #     self._shape = shape
-    #     self._is_constrained = value
-    #
-    # def _read_variable_op(self):
-    #     value = super()._read_variable_op()
-    #     constrained = self.__dict__.get('_is_constrained')
-    #     if self.transform is None or (constrained is not None and not constrained):
-    #         return value
-    #     return self.transform.forward(value)
-    #
-    # @property
-    # def unconstrained(self):
-    #     if self.transform is None:
-    #         return self
-    #     return self.transform.inverse(self)
+        self.trainable = trainable
 
     @property
     def constrained(self):
-        if self.transform is None:
-            return self
-        return self.transform.forward(self)
-
-    @trainable.setter
-    def trainable(self, flag: Union[bool, int]):
-        self._trainable = bool(flag)
-
-    def log_prior(self):
-        x = self.constrained
-        y = self
-        dtype = x.dtype
-        log_prob = tf.convert_to_tensor(0., dtype=dtype)
-        bijector = self.transform
-        prior_exists = self.prior is not None
-        transform_exists = self.transform is not None
-        if prior_exists:
-            log_prob = self.prior.log_prob(x)
-        log_det_jacobian = tf.convert_to_tensor(0., dtype=dtype)
-        if transform_exists:
-            log_det_jacobian = bijector.forward_log_det_jacobian(y, y.shape.ndims)
-        return log_prob + log_det_jacobian
+        return self.constrained_tensor
 
     def __call__(self):
         return self.constrained
 
-    def __ilshift__(self, data: VariableData):
-        data = _to_variable_data(data)
-        unconstrained_data = _to_unconstrained(data, self.transform)
-        self._init_from_args(unconstrained_data, trainable=self.trainable)
-        return self
+    def log_prior(self):
+        if self.prior is None:
+            return tf.constant(0., dtype=self.unconstrained_tensor.dtype)
+
+        log_prob = self.prior.log_prob(self.constrained_tensor)
+        log_det_jacobian = bijector.forward_log_det_jacobian(
+            self.unconstrained_tensor,
+            self.unconstrained_tensor.shape.ndims,
+        )
+        return log_prob + log_det_jacobian
 
 
 class Module(object):
@@ -124,13 +75,18 @@ class Module(object):
         self._parameters = dict()
 
     @property
-    def variables(self) -> List[tfe.Variable]:
-        self_variables = list(self._parameters.values())
-        modules_variables = sum([m.variables for m in self._modules.values()], [])
-        return self_variables + modules_variables
+    def parameters(self):
+        return list(it.chain(
+            self._parameters.values(),
+            it.chain.from_iterable(m.parameters for m in self._modules.values())
+        ))
 
     @property
-    def trainable_variables(self) -> List[tfe.Variable]:
+    def variables(self):
+        return [parameter.unconstrained_tensor for parameter in self.parameters]
+
+    @property
+    def trainable_variables(self):
         return [v for v in self.variables if v.trainable]
 
     @property
@@ -151,7 +107,7 @@ class Module(object):
 
     def __setattr__(self, name, value):
         parameters = self.__dict__.get('_parameters')
-        is_parameter = isinstance(value, (Parameter, tfe.Variable))
+        is_parameter = isinstance(value, (Parameter,))
         if is_parameter and parameters is None:
             raise AttributeError()
         if parameters is not None and name in parameters and not is_parameter:
@@ -174,45 +130,26 @@ class Module(object):
 
 
 class ModuleList(object):
-    def __init__(self, modules: List[ModuleLike]):
+    def __init__(self, modules):
         self._modules = modules
 
     @property
-    def variables(self) -> List[tfe.Variable]:
+    def variables(self):
         module_variables = sum([m.variables for m in self._modules], [])
         return module_variables
 
     @property
-    def trainable_variables(self) -> List[tfe.Variable]:
+    def trainable_variables(self):
         return [v for v in self.variables if v.trainable]
 
     def __len__(self):
         return len(self._modules)
 
-    def append(self, module: ModuleLike):
+    def append(self, module):
         self._modules.append(module)
 
-    def __getitem__(self, index: int) -> ModuleLike:
+    def __getitem__(self, index: int):
         return self._modules[index]
 
-    def __setitem__(self, index: int, module: ModuleLike):
+    def __setitem__(self, index: int, module):
         self._modules[index] = module
-
-
-def _to_variable_data(data: VariableData, dtype: Optional[DType] = None) -> np.ndarray:
-    if isinstance(data, (tf.Tensor, tfe.Variable)):
-        if dtype is not None and data.dtype != dtype:
-            return tf.cast(data, dtype)
-        return data
-    if dtype is not None and isinstance(dtype, tf.DType):
-        dtype = dtype.as_numpy_dtype
-    if dtype is None and not isinstance(data, np.ndarray):
-        dtype = default_float()
-    return np.array(data, dtype=dtype)
-
-
-def _to_unconstrained(data: VariableData, transform: Transform) -> tf.Tensor:
-    unconstrained_data = data
-    if transform is not None:
-        unconstrained_data = transform.inverse(data)
-    return unconstrained_data

@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 from ..base import Parameter, positive
 from .base import Kernel
+from ..util import default_float
 
 
 class Stationary(Kernel):
@@ -30,8 +31,8 @@ class Stationary(Kernel):
         super().__init__(active_dims)
         self.ard = ard
         # lengthscales, self.ard = self._validate_ard_shape("lengthscales", lengthscales, ard)
-        self.variance = Parameter(variance, transform=positive())
-        self.lengthscales = Parameter(lengthscales, transform=positive())
+        self.variance = Parameter(variance, name='variance', dtype=default_float(), transform=positive())
+        self.lengthscales = Parameter(lengthscales, name='lengthscales', dtype=default_float(), transform=positive())
 
 
     def scaled_square_dist(self, X, X2):

@@ -106,26 +106,26 @@ class SVGP(GPModel):
             covariance diagonal elements. If False, `q_sqrt` is three dimensional.
         """
         q_mu = np.zeros((num_inducing, self.num_latent)) if q_mu is None else q_mu
-        self.q_mu = Parameter(q_mu, dtype=default_float())  # M x P
+        self.q_mu = Parameter(q_mu, name='q_mu', dtype=default_float())  # M x P
 
         if q_sqrt is None:
             if self.q_diag:
                 ones = np.ones((num_inducing, self.num_latent), dtype=default_float())
-                self.q_sqrt = Parameter(ones, transform=positive())  # M x P
+                self.q_sqrt = Parameter(ones, name='q_sqrt', dtype=default_float(), transform=positive())  # M x P
             else:
                 q_sqrt = [np.eye(num_inducing, dtype=default_float()) for _ in range(self.num_latent)]
                 q_sqrt = np.array(q_sqrt)
-                self.q_sqrt = Parameter(q_sqrt, transform=triangular())  # [P, M, M]
+                self.q_sqrt = Parameter(q_sqrt, name='q_sqrt', dtype=default_float(), transform=triangular())  # [P, M, M]
         else:
             if q_diag:
                 assert q_sqrt.ndim == 2
                 self.num_latent = q_sqrt.shape[1]
-                self.q_sqrt = Parameter(q_sqrt, transform=positive())  # [M, L|P]
+                self.q_sqrt = Parameter(q_sqrt, name='q_sqrt', dtype=default_float(), transform=positive())  # [M, L|P]
             else:
                 assert q_sqrt.ndim == 3
                 self.num_latent = q_sqrt.shape[0]
                 num_inducing = q_sqrt.shape[1]
-                self.q_sqrt = Parameter(q_sqrt, transform=triangular())  # [L|P, M, M]
+                self.q_sqrt = Parameter(q_sqrt, name='q_sqrt', dtype=default_float(), transform=triangular())  # [L|P, M, M]
 
     def prior_kl(self):
         K = None
