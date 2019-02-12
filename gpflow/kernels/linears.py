@@ -1,6 +1,7 @@
 import tensorflow as tf
 from ..base import Parameter, positive
 from .base import Kernel
+from ..util import default_float
 
 
 class Linear(Kernel):
@@ -20,7 +21,7 @@ class Linear(Kernel):
 
         # variance, self.ard = self._validate_ard_shape("variance", variance, ard)
         self.ard = ard
-        self.variance = Parameter(variance, transform=positive())
+        self.variance = Parameter(variance, name='variance', dtype=default_float(), transform=positive())
 
     def K(self, X, X2=None, presliced=False):
         if not presliced:
